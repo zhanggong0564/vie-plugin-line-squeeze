@@ -46,16 +46,20 @@ def test_unregistered_product_raises(judge):
 def test_business_post_process_builds_result(judge):
     ctx = InferenceContext(image=np.zeros((10, 10, 3), np.uint8), h=10, w=10,
                            product_type="七路无熔丝盒无磁环")
-    # 7 路 dc，全对：识别文本 1..7，boxes 给 9 值占位
-    box = np.array([0.1, 0.1, 0.2, 0.2, 0.2, 0.1, 0.1, 0.2, 0.9])
+    # 7 路 dc，全对：识别文本 1..7，boxes 给像素 [x1,y1,x2,y2,score]
+    box = np.array([1.0, 1.0, 2.0, 2.0, 0.9])
     ctx.raw_result = LineSqueezeRecognitionResult(
         dc_res=['1', '2', '3', '4', '5', '6', '7'],
         fu_res=[],
-        norm_dc_boxes=[box] * 7,
-        norm_fu_boxes=[],
+        dc_boxes=[box] * 7,
+        fu_boxes=[],
     )
     judge.business_post_process(ctx)
-    assert ctx.result["status"] == "true"
-    assert set(ctx.result.keys()) == {"status", "detailList", "error_msg", "message"}
-    assert len(ctx.result["detailList"]) == 7
-    assert all(item["scene"] == "dc" for item in ctx.result["detailList"])
+    # 统一契约：ctx.result 为 MoMResult 对象（与 plate_screw/panel_label 一致）
+    assert ctx.result.status is True
+    assert len(ctx.result.detailList) == 7
+    assert all(item.scene == "dc" for item in ctx.result.detailList)
+    # to_dict 输出形状不变，路由层无需再 isinstance 兜底
+    out = ctx.result.to_dict()
+    assert out["status"] == "true"
+    assert set(out.keys()) == {"status", "detailList", "error_msg", "message"}
