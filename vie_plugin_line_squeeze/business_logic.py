@@ -2,6 +2,7 @@
 
 from services.api import detection_factory
 from services.base import BusinessLogicBase
+from schemas.data_base import MoMResult, DetectionItem, MessageType
 from schemas.exceptions import ProductNotRegisteredError, ModelInferenceError
 from schemas.inference_context import InferenceContext
 from utils import vision_logger
@@ -10,9 +11,6 @@ from .line_squeeze_detect import LineSqueezePipeline, ProductType
 
 @detection_factory.register("line_squeeze")
 class LineSqueezeJudgeApi(BusinessLogicBase):
-    # 坐标已在识别管线内归一化，关闭默认 normalize 钩子
-    NORMALIZE = False
-
     def _initialize_model(self, settings):
         from .config import LineSqueezeConfig
         cfg = LineSqueezeConfig()
@@ -37,12 +35,13 @@ class LineSqueezeJudgeApi(BusinessLogicBase):
                 scenario="line_squeeze",
             )
         rec = ctx.raw_result  # LineSqueezeRecognitionResult
-        res, infos = ProductType[product_type](
-            rec.dc_res, rec.fu_res, rec.norm_dc_boxes, rec.norm_fu_boxes
+        passed, infos = ProductType[product_type](
+            rec.dc_res, rec.fu_res, rec.dc_boxes, rec.fu_boxes
         )
-        ctx.result = {
-            "status": "true" if res else "false",
-            "detailList": infos,
-            "error_msg": "",
-            "message": "检测成功" if res else "检测失败",
-        }
+        # 统一结果契约：裸 dict → MoMResult/DetectionItem；坐标为像素值，
+        # 归一化由基类 normalize_hook 统一处理（NORMALIZE 保持默认 True）。
+        ctx.result = MoMResult(
+            detailList=[DetectionItem(**info) for info in infos],
+            status=passed,
+            message=MessageType.SUCCESS.value if passed else MessageType.FAIL.value,
+        )

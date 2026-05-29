@@ -102,8 +102,8 @@ class VerifyLineSequenceUtils:
             for res, box in zip(res_info, sorted_dc_boxes):
                 res_infos.append({
                     "status": res, "scene": "dc",
-                    "coordinate": box[:8].tolist(),
-                    "accuracy": float(box[8]) if len(box) != 0 else "",
+                    "coordinate": box[:4].tolist(),  # 像素 xyxy，归一化交给基类 normalize_hook
+                    "accuracy": float(box[4]) if len(box) != 0 else 0.0,
                 })
         if self.verify_fu:
             res_info = self.verify_line_sequence(fu_infos, self.nums)
@@ -112,8 +112,8 @@ class VerifyLineSequenceUtils:
             for res, box in zip(res_info, sorted_fu_boxes):
                 res_infos.append({
                     "status": res, "scene": "fu",
-                    "coordinate": box[:8].tolist(),
-                    "accuracy": float(box[8]) if len(box) != 0 else "",
+                    "coordinate": box[:4].tolist(),  # 像素 xyxy，归一化交给基类 normalize_hook
+                    "accuracy": float(box[4]) if len(box) != 0 else 0.0,
                 })
         if self.verify_dc and self.verify_fu:
             return (
@@ -160,11 +160,11 @@ ProductType: Dict[str, VerifyLineSequenceUtils] = {
 
 @dataclass
 class LineSqueezeRecognitionResult:
-    """识别管线产出的中间结果（型号校验前）。"""
+    """识别管线产出的中间结果（型号校验前）。boxes 为像素 [x1,y1,x2,y2,score]。"""
     dc_res: List[str] = field(default_factory=list)
     fu_res: List[str] = field(default_factory=list)
-    norm_dc_boxes: List = field(default_factory=list)
-    norm_fu_boxes: List = field(default_factory=list)
+    dc_boxes: List = field(default_factory=list)
+    fu_boxes: List = field(default_factory=list)
 
 
 class LineSqueezePipeline:
@@ -179,7 +179,6 @@ class LineSqueezePipeline:
         self.classes2names = {0: "fu_line", 1: "dc_line"}
 
     def infer(self, image: np.ndarray) -> LineSqueezeRecognitionResult:
-        h, w, _ = image.shape
         results = self.roi_det.infer(image)  # {rect, score, cls}
         classes = results['cls']
         score = results['score']
@@ -197,15 +196,4 @@ class LineSqueezePipeline:
         fu_res = [res['rec_text'][2] for res in self.ocr.predict(input=fu_rois) if len(res['rec_text']) > 2] if fu_rois else []
         dc_res = check_infos(dc_res)
         fu_res = check_infos(fu_res)
-        norm_dc_boxes = self._normalize_boxes(sorted_dc_boxes, w, h)
-        norm_fu_boxes = self._normalize_boxes(sorted_fu_boxes, w, h)
-        return LineSqueezeRecognitionResult(dc_res, fu_res, norm_dc_boxes, norm_fu_boxes)
-
-    @staticmethod
-    def _normalize_boxes(boxes, w: int, h: int) -> List:
-        """把 [x1,y1,x2,y2,score] 框归一化为八点多边形 [..., score]。"""
-        norm = []
-        for box in boxes:
-            x1, y1, x2, y2, sc = box[:5]
-            norm.append(np.array([x1 / w, y1 / h, x2 / w, y1 / h, x2 / w, y2 / h, x1 / w, y2 / h, sc]))
-        return norm
+        return LineSqueezeRecognitionResult(dc_res, fu_res, sorted_dc_boxes, sorted_fu_boxes)
