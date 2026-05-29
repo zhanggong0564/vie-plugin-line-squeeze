@@ -15,6 +15,13 @@ class LineSqueezeRouter(BaseRouter):
     def request_schema(self, json_dict):
         return LineSqueezeRequest(**json_dict)
 
+    @staticmethod
+    def _extract_product_type(request_params):
+        # 本场景型号字段名为 product_model，重写基类默认的 product_type 提取，
+        # 使数据回流按型号分目录而非落到 _unknown_model。
+        model_params = getattr(request_params, "modelParams", None)
+        return getattr(model_params, "product_model", None) if model_params else None
+
     def get_inputs(self, request_params: LineSqueezeRequest, image: np.ndarray):
         product_model = request_params.modelParams.product_model
         return InputParamsBusiness(image=image, product_type=product_model)

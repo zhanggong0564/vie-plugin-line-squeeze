@@ -1,6 +1,5 @@
 '''线路压缩检测：RoiDet（无状态 ONNX 检测）+ OCR 识别管线 + 线序校验工具。'''
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Dict
 
@@ -46,7 +45,7 @@ class RoiDet(BaseOnnxInfer):
         )
         image_shape = meta.src_shape[:2]
         input_shape = self.input_model_shape[2:]
-        res = defaultdict()
+        res = {}
         pred = p[0].copy()
         pred[:, :4] = scale_boxes(input_shape, pred[:, :4], image_shape, xywh=False)
         pred = np.concatenate([pred[:, :4], pred[:, -1:], pred[:, 4:6]], axis=-1)
@@ -175,8 +174,9 @@ class LineSqueezePipeline:
 
     def __init__(self, det_model_path: str, ocr_model_dir: str, det_nc: int = 2,
                  det_conf_threshold: float = 0.5, det_nms_threshold: float = 0.5):
+        # providers=None：交给 BaseOnnxInfer 自动选 CUDA 并保留 CPU 兜底（CPU-only 主机也可加载）
         self.roi_det = RoiDet(det_model_path, det_nc, confThreshold=det_conf_threshold,
-                              nmsThreshold=det_nms_threshold, providers=['CUDAExecutionProvider'])
+                              nmsThreshold=det_nms_threshold)
         self.ocr = TextRecognition(model_dir=ocr_model_dir, model_name='en_PP-OCRv5_mobile_rec')
         self.classes2names = {0: "fu_line", 1: "dc_line"}
 
