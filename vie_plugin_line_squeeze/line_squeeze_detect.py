@@ -54,13 +54,11 @@ class RoiDet(BaseOnnxInfer):
             bbox = xywhr2xyxyxyxy(pred[:, :5])
         conf = pred[:, -2]
         clas = pred[:, -1]
-        res["rect"] = bbox.tolist()
-        res["score"] = conf.tolist()
-        res["cls"] = clas.tolist()
-        # 按分数过滤（保持 master 行为）
-        res["rect"] = [box for box, score in zip(res["rect"], res["score"]) if score >= self.confThreshold]
-        res["score"] = [score for score in res["score"] if score >= self.confThreshold]
-        res["cls"] = [cls for cls, score in zip(res["cls"], res["score"]) if score >= self.confThreshold]
+        # 按分数过滤（保持 master 行为）；单趟掩码避免三列过滤后错位
+        keep = conf >= self.confThreshold
+        res["rect"] = bbox[keep].tolist()
+        res["score"] = conf[keep].tolist()
+        res["cls"] = clas[keep].tolist()
         return res
 
 
@@ -199,12 +197,15 @@ class LineSqueezePipeline:
         fu_res = [res['rec_text'][2] for res in self.ocr.predict(input=fu_rois) if len(res['rec_text']) > 2] if fu_rois else []
         dc_res = check_infos(dc_res)
         fu_res = check_infos(fu_res)
-        norm_dc_boxes = []
-        for box in sorted_dc_boxes:
-            x1, y1, x2, y2, sc = box[:5]
-            norm_dc_boxes.append(np.array([x1 / w, y1 / h, x2 / w, y1 / h, x2 / w, y2 / h, x1 / w, y2 / h, sc]))
-        norm_fu_boxes = []
-        for box in sorted_fu_boxes:
-            x1, y1, x2, y2, sc = box[:5]
-            norm_fu_boxes.append(np.array([x1 / w, y1 / h, x2 / w, y1 / h, x2 / w, y2 / h, x1 / w, y2 / h, sc]))
+        norm_dc_boxes = self._normalize_boxes(sorted_dc_boxes, w, h)
+        norm_fu_boxes = self._normalize_boxes(sorted_fu_boxes, w, h)
         return LineSqueezeRecognitionResult(dc_res, fu_res, norm_dc_boxes, norm_fu_boxes)
+
+    @staticmethod
+    def _normalize_boxes(boxes, w: int, h: int) -> List:
+        """把 [x1,y1,x2,y2,score] 框归一化为八点多边形 [..., score]。"""
+        norm = []
+        for box in boxes:
+            x1, y1, x2, y2, sc = box[:5]
+            norm.append(np.array([x1 / w, y1 / h, x2 / w, y1 / h, x2 / w, y2 / h, x1 / w, y2 / h, sc]))
+        return norm
