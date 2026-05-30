@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=61", "Cython>=3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "vie-plugin-line-squeeze"
 version = "0.1.0"
 description = "VIE 线路压缩检测插件"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["vie-framework"]
 
 [project.entry-points."vie.plugins"]
 line_squeeze = "vie_plugin_line_squeeze.plugin"
