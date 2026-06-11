@@ -3,7 +3,7 @@
 运行（从仓库根目录）：
     python plugins/vie-plugin-line-squeeze/examples/run.py <图片路径> [产品型号]
 
-前置：已 `pip install -e plugins/vie-plugin-line-squeeze`；权重 ./weights/LineSqueeze_v3.onnx 等就位。
+前置：已 `pip install -e plugins/vie-plugin-line-squeeze`；权重 ./weights/line_squeeze/det_v3.onnx 等就位。
 """
 import os
 import sys
