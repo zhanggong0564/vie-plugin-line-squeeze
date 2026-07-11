@@ -1,4 +1,6 @@
 """line_squeeze 插件单元测试：型号校验、线序判定、视觉相似纠正、business_post_process。"""
+from pathlib import Path
+
 import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
@@ -8,6 +10,13 @@ from schemas.inference_context import InferenceContext
 from vie_plugin_line_squeeze.line_squeeze_detect import (
     VerifyLineSequenceUtils, check_infos, LineSqueezeRecognitionResult, ProductType,
 )
+
+
+def test_package_metadata_requires_yolo_pipeline_framework():
+    project = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'version = "0.1.1"' in project
+    assert 'dependencies = ["vie-framework>=2.0.1"]' in project
 
 
 def test_roi_det_uses_shared_yolo_pipeline(monkeypatch):
@@ -91,6 +100,36 @@ def test_roi_det_post_process_uses_shared_yolo_pipeline(monkeypatch):
         "score": [pytest.approx(0.9)],
         "cls": [1.0],
     }
+
+
+def test_roi_det_post_process_preserves_empty_result(monkeypatch):
+    from schemas.inference_context import PreprocMeta
+    from vie_plugin_line_squeeze.line_squeeze_detect import RoiDet
+
+    detector = RoiDet.__new__(RoiDet)
+    detector._input_model_shape = [1, 3, 8, 10]
+    detector.task = "rect"
+    detector.confThreshold = 0.5
+    detector.nmsThreshold = 0.6
+    detector.filter_classes = None
+    detector.agnostic = False
+    detector.nc = 2
+    empty = np.empty((0, 6), dtype=np.float32)
+    monkeypatch.setattr(
+        "vie_plugin_line_squeeze.line_squeeze_detect.run_yolo_nms",
+        lambda *args, **kwargs: [empty],
+    )
+    monkeypatch.setattr(
+        "vie_plugin_line_squeeze.line_squeeze_detect.restore_yolo_boxes",
+        lambda detections, input_shape, src_shape: detections.copy(),
+    )
+
+    result = detector.post_process(
+        [np.zeros((1, 6, 0), dtype=np.float32)],
+        PreprocMeta(r=1.0, dw=0, dh=0, src_shape=(3, 5, 3)),
+    )
+
+    assert result == {"rect": [], "score": [], "cls": []}
 
 
 def test_check_infos_visual_similar_correction():

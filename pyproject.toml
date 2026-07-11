@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vie-plugin-line-squeeze"
-version = "0.1.0"
+version = "0.1.1"
 description = "VIE 线路压缩检测插件"
 requires-python = ">=3.10"
-dependencies = ["vie-framework"]
+dependencies = ["vie-framework>=2.0.1"]
 
 [project.entry-points."vie.plugins"]
 line_squeeze = "vie_plugin_line_squeeze.plugin"
