@@ -7,9 +7,12 @@ import numpy as np
 from paddleocr import TextRecognition
 
 from services.base import BaseOnnxInfer
-from services.utils import sort_boxes, scale_boxes, xywhr2xyxyxyxy, letterbox
-from services.utils.box import non_max_suppression_v8
-from schemas.inference_context import PreprocMeta
+from services.base.yolo_pipeline import (
+    prepare_yolo_input,
+    restore_yolo_boxes,
+    run_yolo_nms,
+)
+from services.utils import sort_boxes, xywhr2xyxyxyxy
 from utils import vision_logger
 
 
@@ -24,30 +27,22 @@ class RoiDet(BaseOnnxInfer):
         self.agnostic = False
 
     def preprocess(self, im):
-        img, r, dw, dh = letterbox(im=im, auto=False, new_shape=self._input_model_shape[2:])
-        tensor = np.stack([img])
-        tensor = tensor[..., ::-1].transpose((0, 3, 1, 2))  # BGR->RGB, BHWC->BCHW
-        tensor = np.ascontiguousarray(tensor).astype(np.float32)
-        tensor /= 255.0
-        meta = PreprocMeta(r=r, dw=dw, dh=dh, src_shape=im.shape)
-        return tensor, meta
+        return prepare_yolo_input(im, self._input_model_shape[2:])
 
     def post_process(self, preds, meta):
-        p = non_max_suppression_v8(
+        p = run_yolo_nms(
             preds[0],
             task=self.task,
-            conf_thres=self.confThreshold,
-            iou_thres=self.nmsThreshold,
+            conf_threshold=self.confThreshold,
+            iou_threshold=self.nmsThreshold,
             classes=self.filter_classes,
             agnostic=self.agnostic,
-            multi_label=False,
             nc=self.nc,
         )
-        image_shape = meta.src_shape[:2]
-        input_shape = self.input_model_shape[2:]
         res = {}
-        pred = p[0].copy()
-        pred[:, :4] = scale_boxes(input_shape, pred[:, :4], image_shape, xywh=False)
+        pred = restore_yolo_boxes(
+            p[0], self.input_model_shape[2:], meta.src_shape
+        )
         pred = np.concatenate([pred[:, :4], pred[:, -1:], pred[:, 4:6]], axis=-1)
         bbox = pred[:, :4]  # xyxy
         if self.task == "obb":

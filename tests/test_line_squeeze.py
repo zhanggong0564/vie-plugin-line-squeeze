@@ -10,6 +10,89 @@ from vie_plugin_line_squeeze.line_squeeze_detect import (
 )
 
 
+def test_roi_det_uses_shared_yolo_pipeline(monkeypatch):
+    from vie_plugin_line_squeeze.line_squeeze_detect import RoiDet
+
+    detector = RoiDet.__new__(RoiDet)
+    detector._input_model_shape = [1, 3, 8, 10]
+    detector.task = "rect"
+    detector.confThreshold = 0.5
+    detector.nmsThreshold = 0.6
+    detector.filter_classes = None
+    detector.agnostic = False
+    detector.nc = 2
+    image = np.zeros((3, 5, 3), dtype=np.uint8)
+    prepared = (object(), object())
+
+    monkeypatch.setattr(
+        "vie_plugin_line_squeeze.line_squeeze_detect.prepare_yolo_input",
+        lambda value, shape: prepared,
+    )
+    assert detector.preprocess(image) is prepared
+
+
+def test_roi_det_post_process_uses_shared_yolo_pipeline(monkeypatch):
+    from schemas.inference_context import PreprocMeta
+    from vie_plugin_line_squeeze.line_squeeze_detect import RoiDet
+
+    detector = RoiDet.__new__(RoiDet)
+    detector._input_model_shape = [1, 3, 8, 10]
+    detector.task = "rect"
+    detector.confThreshold = 0.5
+    detector.nmsThreshold = 0.6
+    detector.filter_classes = [1]
+    detector.agnostic = True
+    detector.nc = 2
+    raw_detection = np.array(
+        [[1, 2, 3, 4, 0.9, 1], [5, 6, 7, 8, 0.4, 0]], dtype=np.float32
+    )
+    restored = np.array(
+        [[10, 20, 30, 40, 0.9, 1], [50, 60, 70, 80, 0.4, 0]],
+        dtype=np.float32,
+    )
+    prediction = np.zeros((1, 6, 2), dtype=np.float32)
+    meta = PreprocMeta(r=1.0, dw=0, dh=0, src_shape=(3, 5, 3))
+    captured = {}
+
+    def fake_nms(value, **kwargs):
+        captured["nms"] = (value, kwargs)
+        return [raw_detection]
+
+    def fake_restore(detections, input_shape, src_shape):
+        captured["restore"] = (detections, input_shape, src_shape)
+        return restored
+
+    monkeypatch.setattr(
+        "vie_plugin_line_squeeze.line_squeeze_detect.run_yolo_nms", fake_nms
+    )
+    monkeypatch.setattr(
+        "vie_plugin_line_squeeze.line_squeeze_detect.restore_yolo_boxes",
+        fake_restore,
+    )
+
+    result = detector.post_process([prediction], meta)
+
+    assert captured["nms"] == (
+        prediction,
+        {
+            "task": "rect",
+            "conf_threshold": 0.5,
+            "iou_threshold": 0.6,
+            "classes": [1],
+            "agnostic": True,
+            "nc": 2,
+        },
+    )
+    assert captured["restore"][0] is raw_detection
+    assert captured["restore"][1] == [8, 10]
+    assert captured["restore"][2] == (3, 5, 3)
+    assert result == {
+        "rect": [[10.0, 20.0, 30.0, 40.0]],
+        "score": [pytest.approx(0.9)],
+        "cls": [1.0],
+    }
+
+
 def test_check_infos_visual_similar_correction():
     # 仅纠正到 valid_info(1-7) 内的目标：S->5, l->1, b->6；'O'->'0' 不适用(0 非有效线号)，原样保留
     assert check_infos(['S', 'l', 'b', '3']) == ['5', '1', '6', '3']
