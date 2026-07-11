@@ -13,7 +13,8 @@ from vie_plugin_line_squeeze.line_squeeze_detect import (
 
 
 def test_package_metadata_requires_yolo_pipeline_framework():
-    project = Path("pyproject.toml").read_text(encoding="utf-8")
+    project_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    project = project_path.read_text(encoding="utf-8")
 
     assert 'version = "0.1.1"' in project
     assert 'dependencies = ["vie-framework>=2.0.1"]' in project
