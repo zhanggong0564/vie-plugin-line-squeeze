@@ -8,6 +8,8 @@
 ### 变更
 
 - 同步示例和配置中的模型路径，采用 `weights/{scene}/{task}_{arch}_v{N}` 命名规范。
+- OCR 识别从 `paddleocr.TextRecognition` 迁移到框架通用 ONNX CTC 管线，生产运行时不再依赖 PaddleOCR/PaddleX。
+- 识别权重切换为 `weights/line_squeeze/rec_ppocrv5en_v1.onnx`，保留 PP-OCRv5 动态宽度预处理和字符解码契约。
 
 ## [0.1.1] - 2026-07-11
 
