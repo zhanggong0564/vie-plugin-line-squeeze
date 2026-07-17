@@ -16,7 +16,7 @@ def test_package_metadata_requires_yolo_pipeline_framework():
     project_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
     project = project_path.read_text(encoding="utf-8")
 
-    assert 'version = "0.1.1"' in project
+    assert 'version = "0.1.2"' in project
     assert 'dependencies = ["vie-framework>=2.0.1"]' in project
 
 
@@ -137,6 +137,22 @@ def test_check_infos_visual_similar_correction():
     # 仅纠正到 valid_info(1-7) 内的目标：S->5, l->1, b->6；'O'->'0' 不适用(0 非有效线号)，原样保留
     assert check_infos(['S', 'l', 'b', '3']) == ['5', '1', '6', '3']
     assert check_infos(['O']) == ['O']
+
+
+def test_pipeline_uses_onnx_text_recognizer():
+    with patch(
+        "vie_plugin_line_squeeze.line_squeeze_detect.LineSqueezeTextRecognizer"
+    ) as recognizer_class, patch(
+        "vie_plugin_line_squeeze.line_squeeze_detect.RoiDet"
+    ):
+        from vie_plugin_line_squeeze.line_squeeze_detect import LineSqueezePipeline
+
+        pipeline = LineSqueezePipeline(
+            "det.onnx", "rec.onnx", "inference.yml", det_nc=2
+        )
+
+    recognizer_class.assert_called_once_with("rec.onnx", "inference.yml")
+    assert pipeline.ocr is recognizer_class.return_value
 
 
 def test_verify_line_sequence_correct_order():
