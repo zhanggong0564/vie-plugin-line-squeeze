@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 
 import numpy as np
-from paddleocr import TextRecognition
 
 from services.base import BaseOnnxInfer
 from services.base.yolo_pipeline import (
@@ -14,6 +13,7 @@ from services.base.yolo_pipeline import (
 )
 from services.utils import sort_boxes, xywhr2xyxyxyxy
 from utils import vision_logger
+from .ocr_models import LineSqueezeTextRecognizer
 
 
 class RoiDet(BaseOnnxInfer):
@@ -165,12 +165,13 @@ class LineSqueezeRecognitionResult:
 class LineSqueezePipeline:
     """RoiDet + OCR 识别管线。infer(image) 产出归一化 boxes + OCR 文本，型号校验交给 business_post_process。"""
 
-    def __init__(self, det_model_path: str, ocr_model_dir: str, det_nc: int = 2,
+    def __init__(self, det_model_path: str, ocr_model_path: str,
+                 ocr_metadata_path: str, det_nc: int = 2,
                  det_conf_threshold: float = 0.5, det_nms_threshold: float = 0.5):
         # providers=None：交给 BaseOnnxInfer 自动选 CUDA 并保留 CPU 兜底（CPU-only 主机也可加载）
         self.roi_det = RoiDet(det_model_path, det_nc, confThreshold=det_conf_threshold,
                               nmsThreshold=det_nms_threshold)
-        self.ocr = TextRecognition(model_dir=ocr_model_dir, model_name='en_PP-OCRv5_mobile_rec')
+        self.ocr = LineSqueezeTextRecognizer(ocr_model_path, ocr_metadata_path)
         self.classes2names = {0: "fu_line", 1: "dc_line"}
 
     def infer(self, image: np.ndarray) -> LineSqueezeRecognitionResult:
@@ -187,8 +188,8 @@ class LineSqueezePipeline:
         sorted_fu_boxes, _ = sort_boxes(fu_boxes)
         dc_rois = [image[int(b[1]) + 10:int(b[3]) - 10, int(b[0]):int(b[2])] for b in sorted_dc_boxes]
         fu_rois = [image[int(b[1]) + 10:int(b[3]) - 10, int(b[0]):int(b[2])] for b in sorted_fu_boxes]
-        dc_res = [res['rec_text'][2] for res in self.ocr.predict(input=dc_rois) if len(res['rec_text']) > 2] if dc_rois else []
-        fu_res = [res['rec_text'][2] for res in self.ocr.predict(input=fu_rois) if len(res['rec_text']) > 2] if fu_rois else []
+        dc_res = [res['rec_text'][2] for res in self.ocr.predict(dc_rois) if len(res['rec_text']) > 2] if dc_rois else []
+        fu_res = [res['rec_text'][2] for res in self.ocr.predict(fu_rois) if len(res['rec_text']) > 2] if fu_rois else []
         dc_res = check_infos(dc_res)
         fu_res = check_infos(fu_res)
         return LineSqueezeRecognitionResult(dc_res, fu_res, sorted_dc_boxes, sorted_fu_boxes)
