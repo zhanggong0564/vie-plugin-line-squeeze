@@ -17,7 +17,8 @@ class LineSqueezeJudgeApi(BusinessLogicBase):
         try:
             self.detector = LineSqueezePipeline(
                 det_model_path=cfg.det_model_path,
-                ocr_model_dir=cfg.ocr_model_dir,
+                ocr_model_path=cfg.ocr_model_path,
+                ocr_metadata_path=cfg.ocr_metadata_path,
                 det_nc=cfg.det_nc,
                 det_conf_threshold=cfg.det_conf_threshold,
                 det_nms_threshold=cfg.det_nms_threshold,
