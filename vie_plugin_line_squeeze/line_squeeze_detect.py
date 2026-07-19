@@ -5,43 +5,70 @@ from typing import List, Dict
 
 import numpy as np
 
-from services.base import BaseOnnxInfer
-from services.base.yolo_pipeline import (
-    prepare_yolo_input,
-    restore_yolo_boxes,
-    run_yolo_nms,
-)
-from services.utils import sort_boxes, xywhr2xyxyxyxy
+from services.base import BaseVisionInfer
+from services.inference import InferenceRunner
+from services.vision.boxes import scale_boxes, sort_boxes, xywhr2xyxyxyxy
+from services.vision.nms import non_max_suppression_v8
+from services.vision.preprocessing import letterbox
+from schemas.inference_context import PreprocMeta
+from schemas.exceptions import ModelInferenceError
 from utils import vision_logger
 from .ocr_models import LineSqueezeTextRecognizer
 
 
-class RoiDet(BaseOnnxInfer):
-    """ROI 检测器：适配无状态 BaseOnnxInfer（preprocess→(tensor,meta)，post_process(preds,meta)）。"""
+class RoiDet(BaseVisionInfer):
+    """ROI detector backed by an injected inference runner."""
 
-    def __init__(self, model_path, nc, confThreshold=0.5, nmsThreshold=0.5, providers=None):
-        super().__init__(model_path, confThreshold=confThreshold, nmsThreshold=nmsThreshold, providers=providers)
+    def __init__(
+        self,
+        runner: InferenceRunner,
+        nc,
+        confThreshold=0.5,
+        nmsThreshold=0.5,
+    ):
+        super().__init__(
+            runner,
+            confThreshold=confThreshold,
+            nmsThreshold=nmsThreshold,
+        )
         self.task = "rect"
         self.nc = nc
         self.filter_classes = None
         self.agnostic = False
 
     def preprocess(self, im):
-        return prepare_yolo_input(im, self._input_model_shape[2:])
+        img, r, dw, dh = letterbox(
+            im=im,
+            auto=False,
+            new_shape=self._input_model_shape[2:],
+        )
+        tensor = np.stack([img])
+        tensor = tensor[..., ::-1].transpose((0, 3, 1, 2))
+        tensor = np.ascontiguousarray(tensor).astype(np.float32)
+        tensor /= 255.0
+        meta = PreprocMeta(r=r, dw=dw, dh=dh, src_shape=im.shape)
+        return tensor, meta
 
     def post_process(self, preds, meta):
-        p = run_yolo_nms(
+        p = non_max_suppression_v8(
             preds[0],
             task=self.task,
-            conf_threshold=self.confThreshold,
-            iou_threshold=self.nmsThreshold,
+            conf_thres=self.confThreshold,
+            iou_thres=self.nmsThreshold,
             classes=self.filter_classes,
             agnostic=self.agnostic,
+            multi_label=False,
             nc=self.nc,
         )
+        image_shape = meta.src_shape[:2]
+        input_shape = self.input_model_shape[2:]
         res = {}
-        pred = restore_yolo_boxes(
-            p[0], self.input_model_shape[2:], meta.src_shape
+        pred = p[0].copy()
+        pred[:, :4] = scale_boxes(
+            input_shape,
+            pred[:, :4],
+            image_shape,
+            xywh=False,
         )
         pred = np.concatenate([pred[:, :4], pred[:, -1:], pred[:, 4:6]], axis=-1)
         bbox = pred[:, :4]  # xyxy
@@ -165,13 +192,26 @@ class LineSqueezeRecognitionResult:
 class LineSqueezePipeline:
     """RoiDet + OCR 识别管线。infer(image) 产出归一化 boxes + OCR 文本，型号校验交给 business_post_process。"""
 
-    def __init__(self, det_model_path: str, ocr_model_path: str,
-                 ocr_metadata_path: str, det_nc: int = 2,
-                 det_conf_threshold: float = 0.5, det_nms_threshold: float = 0.5):
-        # providers=None：交给 BaseOnnxInfer 自动选 CUDA 并保留 CPU 兜底（CPU-only 主机也可加载）
-        self.roi_det = RoiDet(det_model_path, det_nc, confThreshold=det_conf_threshold,
-                              nmsThreshold=det_nms_threshold)
-        self.ocr = LineSqueezeTextRecognizer(ocr_model_path, ocr_metadata_path)
+    def __init__(
+        self,
+        ocr_metadata_path: str,
+        det_nc: int = 2,
+        det_conf_threshold: float = 0.5,
+        det_nms_threshold: float = 0.5,
+        *,
+        detection_runner: InferenceRunner,
+        recognition_runner: InferenceRunner,
+    ):
+        self.roi_det = RoiDet(
+            detection_runner,
+            det_nc,
+            confThreshold=det_conf_threshold,
+            nmsThreshold=det_nms_threshold,
+        )
+        self.ocr = LineSqueezeTextRecognizer(
+            ocr_metadata_path,
+            runner=recognition_runner,
+        )
         self.classes2names = {0: "fu_line", 1: "dc_line"}
 
     def infer(self, image: np.ndarray) -> LineSqueezeRecognitionResult:
@@ -186,10 +226,48 @@ class LineSqueezePipeline:
         # ⚠️ 新框架 sort_boxes 返回 (boxes, indices)，需解包（master 旧版只返回 boxes）
         sorted_dc_boxes, _ = sort_boxes(dc_boxes)
         sorted_fu_boxes, _ = sort_boxes(fu_boxes)
-        dc_rois = [image[int(b[1]) + 10:int(b[3]) - 10, int(b[0]):int(b[2])] for b in sorted_dc_boxes]
-        fu_rois = [image[int(b[1]) + 10:int(b[3]) - 10, int(b[0]):int(b[2])] for b in sorted_fu_boxes]
-        dc_res = [res['rec_text'][2] for res in self.ocr.predict(dc_rois) if len(res['rec_text']) > 2] if dc_rois else []
-        fu_res = [res['rec_text'][2] for res in self.ocr.predict(fu_rois) if len(res['rec_text']) > 2] if fu_rois else []
+        dc_rois = self._crop_rois(image, sorted_dc_boxes)
+        fu_rois = self._crop_rois(image, sorted_fu_boxes)
+        dc_res = self._recognize(dc_rois)
+        fu_res = self._recognize(fu_rois)
         dc_res = check_infos(dc_res)
         fu_res = check_infos(fu_res)
         return LineSqueezeRecognitionResult(dc_res, fu_res, sorted_dc_boxes, sorted_fu_boxes)
+
+    @staticmethod
+    def _crop_rois(image: np.ndarray, boxes) -> list[np.ndarray]:
+        rois = []
+        for box in boxes:
+            height, width = image.shape[:2]
+            x1 = max(int(box[0]), 0)
+            y1 = max(int(box[1]) + 10, 0)
+            x2 = min(int(box[2]), width)
+            y2 = min(int(box[3]) - 10, height)
+            if x2 <= x1 or y2 <= y1:
+                raise ModelInferenceError(
+                    "line_squeeze detected ROI is empty after clipping",
+                    scenario="line_squeeze",
+                )
+            roi = image[y1:y2, x1:x2]
+            rois.append(roi)
+        return rois
+
+    def _recognize(self, rois: list[np.ndarray]) -> list[str]:
+        if not rois:
+            return []
+        return [
+            result.text[2]
+            for result in self.ocr.predict(rois)
+            if len(result.text) > 2
+        ]
+
+    def close(self) -> None:
+        first_error = None
+        for model in (self.roi_det, self.ocr):
+            try:
+                model.close()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
