@@ -8,8 +8,14 @@
 ### 变更
 
 - 同步示例和配置中的模型路径，采用 `weights/{scene}/{task}_{arch}_v{N}` 命名规范。
-- OCR 识别从 `paddleocr.TextRecognition` 迁移到框架通用 ONNX CTC 管线，生产运行时不再依赖 PaddleOCR/PaddleX。
-- 识别权重切换为 `weights/line_squeeze/rec_ppocrv5en_v1.onnx`，保留 PP-OCRv5 动态宽度预处理和字符解码契约。
+- 场景注册迁移到框架 `ScenarioRegistry`。
+- ROI 检测器改为接收框架 runner，并使用 `services.vision` 公共操作。
+- OCR 从 PaddleOCR 运行时切换为 `rec_ppocrv5en_v1.onnx`，通过 metadata 保持
+  PP-OCRv5 预处理、字符表和 CTC 解码契约。
+- 兼容 PP-OCRv5 英文模型的动态宽度输入与空格类别（438 类 CTC 输出）metadata。
+- DC/FU ROI 分别批量识别，保留第三字符提取、相似字符修正和型号判定行为。
+- 双 runner 支持初始化失败回滚和服务关闭统一释放。
+- 新增 ONNX OCR、批处理、无 Paddle 导入和资源生命周期测试。
 
 ## [0.1.1] - 2026-07-11
 
