@@ -1,7 +1,12 @@
 '''线路压缩检测业务逻辑：适配模板方法基类，型号校验 + 线序判定收敛到 business_post_process(ctx)。'''
 
-from services.api import detection_factory
 from services.base import BusinessLogicBase
+from services.inference import (
+    OnnxRuntimeOptions,
+    RunnerSpec,
+    create_inference_runner,
+)
+from services.scenario_registry import scenario_registry
 from schemas.data_base import MoMResult, DetectionItem, MessageType
 from schemas.exceptions import ProductNotRegisteredError, ModelInferenceError
 from schemas.inference_context import InferenceContext
@@ -9,23 +14,52 @@ from utils import vision_logger
 from .line_squeeze_detect import LineSqueezePipeline, ProductType
 
 
-@detection_factory.register("line_squeeze")
+@scenario_registry.register("line_squeeze")
 class LineSqueezeJudgeApi(BusinessLogicBase):
     def _initialize_model(self, settings):
         from .config import LineSqueezeConfig
         cfg = LineSqueezeConfig()
+        created_runners = []
         try:
+            options = OnnxRuntimeOptions.from_settings(settings)
+            detection_runner = create_inference_runner(
+                RunnerSpec(
+                    scenario="line_squeeze",
+                    onnx_path=cfg.det_model_path,
+                ),
+                options,
+            )
+            created_runners.append(detection_runner)
+            recognition_runner = create_inference_runner(
+                RunnerSpec(
+                    scenario="line_squeeze",
+                    onnx_path=cfg.ocr_model_path,
+                ),
+                options,
+            )
+            created_runners.append(recognition_runner)
             self.detector = LineSqueezePipeline(
-                det_model_path=cfg.det_model_path,
-                ocr_model_path=cfg.ocr_model_path,
                 ocr_metadata_path=cfg.ocr_metadata_path,
                 det_nc=cfg.det_nc,
                 det_conf_threshold=cfg.det_conf_threshold,
                 det_nms_threshold=cfg.det_nms_threshold,
+                detection_runner=detection_runner,
+                recognition_runner=recognition_runner,
             )
         except Exception as e:
+            for runner in created_runners:
+                try:
+                    runner.close()
+                except Exception as close_error:
+                    vision_logger.warning(
+                        f"line_squeeze 初始化回滚清理失败: {close_error}"
+                    )
             vision_logger.error(f"initialize model failed, error: {e}")
-            raise ModelInferenceError("line_squeeze 模型加载失败", scenario="line_squeeze", original_error=e)
+            raise ModelInferenceError(
+                "line_squeeze 模型加载失败",
+                scenario="line_squeeze",
+                original_error=e,
+            ) from e
 
     def business_post_process(self, ctx: InferenceContext) -> None:
         product_type = ctx.product_type
