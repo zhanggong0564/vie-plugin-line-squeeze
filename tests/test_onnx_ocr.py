@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import yaml
 
-from services.base import OnnxRuntimeRunner, TensorInfo
+from services.inference import OnnxRuntimeOptions, OnnxRuntimeRunner, TensorInfo
 from vie_plugin_line_squeeze.ocr_models import LineSqueezeTextRecognizer
 
 
@@ -44,32 +44,30 @@ def _write_metadata(path: Path) -> None:
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
-def test_recognizer_loads_metadata_and_uses_dynamic_width(tmp_path):
+def test_recognizer_loads_metadata_and_uses_metadata_width(tmp_path):
     metadata = tmp_path / "inference.yml"
     _write_metadata(metadata)
     runner = RecordingRunner()
-    recognizer = LineSqueezeTextRecognizer(
-        "recognition.onnx", str(metadata), runner=runner
-    )
+    recognizer = LineSqueezeTextRecognizer(str(metadata), runner=runner)
     narrow = np.zeros((48, 64, 3), dtype=np.uint8)
     wide = np.zeros((96, 643, 3), dtype=np.uint8)
 
     assert recognizer.characters == CHARACTERS
-    assert recognizer.predict([narrow, wide]) == [
-        {"rec_text": "1", "rec_score": 1.0},
-        {"rec_text": "1", "rec_score": 1.0},
-    ]
-    assert runner.input_shapes == [(2, 3, 48, 321)]
+    results = recognizer.predict([narrow, wide])
+    assert [result.text for result in results] == ["1", "1"]
+    assert [result.score for result in results] == [1.0, 1.0]
+    assert runner.input_shapes == [(2, 3, 48, 320)]
 
 
 def test_recognizer_preprocess_matches_paddle_rec_resize(tmp_path):
     metadata = tmp_path / "inference.yml"
     _write_metadata(metadata)
     recognizer = LineSqueezeTextRecognizer(
-        "recognition.onnx", str(metadata), runner=RecordingRunner()
+        str(metadata),
+        runner=RecordingRunner(),
     )
     image = np.arange(96 * 643 * 3, dtype=np.uint8).reshape(96, 643, 3)
-    resized = cv2.resize(image, (321, 48), interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(image, (320, 48), interpolation=cv2.INTER_LINEAR)
     expected = resized.astype(np.float32).transpose(2, 0, 1) / 255
     expected = ((expected - 0.5) / 0.5)[None]
 
@@ -107,14 +105,17 @@ def test_exported_onnx_matches_paddle_text_on_numeric_crops():
     paddle_results = list(paddle_model.predict(input=crops))
     runner = OnnxRuntimeRunner(
         str(onnx_path),
-        providers=["CPUExecutionProvider"],
-        warmup=False,
-        require_cuda=False,
+        OnnxRuntimeOptions(
+            providers=("CPUExecutionProvider",),
+            warmup=False,
+            require_cuda=False,
+        ),
     )
     onnx_model = LineSqueezeTextRecognizer(
-        str(onnx_path), str(model_dir / "inference.yml"), runner=runner
+        str(model_dir / "inference.yml"),
+        runner=runner,
     )
 
-    assert [item["rec_text"] for item in onnx_model.predict(crops)] == [
+    assert [item.text for item in onnx_model.predict(crops)] == [
         item["rec_text"] for item in paddle_results
     ]
