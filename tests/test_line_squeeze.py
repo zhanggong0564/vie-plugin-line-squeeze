@@ -22,7 +22,8 @@ def test_package_metadata_requires_yolo_pipeline_framework():
     project = project_path.read_text(encoding="utf-8")
 
     assert 'version = "0.1.2"' in project
-    assert 'dependencies = ["vie-framework>=2.0.1"]' in project
+    assert '"vie-framework>=2.0.1"' in project
+    assert '"PyYAML>=6.0,<7"' in project
 
 
 def test_roi_det_uses_shared_yolo_pipeline(monkeypatch):
@@ -37,13 +38,29 @@ def test_roi_det_uses_shared_yolo_pipeline(monkeypatch):
     detector.agnostic = False
     detector.nc = 2
     image = np.zeros((3, 5, 3), dtype=np.uint8)
-    prepared = (object(), object())
+    prepared = np.full((8, 10, 3), 255, dtype=np.uint8)
+    captured = {}
+
+    def fake_letterbox(*, im, auto, new_shape):
+        captured["letterbox"] = (im, auto, new_shape)
+        return prepared, 1.5, 2.0, 3.0
 
     monkeypatch.setattr(
-        "vie_plugin_line_squeeze.line_squeeze_detect.prepare_yolo_input",
-        lambda value, shape: prepared,
+        "vie_plugin_line_squeeze.line_squeeze_detect.letterbox",
+        fake_letterbox,
     )
-    assert detector.preprocess(image) is prepared
+
+    tensor, meta = detector.preprocess(image)
+
+    assert captured["letterbox"] == (image, False, [8, 10])
+    assert tensor.shape == (1, 3, 8, 10)
+    np.testing.assert_allclose(tensor, 1.0)
+    assert (meta.r, meta.dw, meta.dh, meta.src_shape) == (
+        1.5,
+        2.0,
+        3.0,
+        image.shape,
+    )
 
 
 def test_roi_det_post_process_uses_shared_yolo_pipeline(monkeypatch):
@@ -73,16 +90,17 @@ def test_roi_det_post_process_uses_shared_yolo_pipeline(monkeypatch):
         captured["nms"] = (value, kwargs)
         return [raw_detection]
 
-    def fake_restore(detections, input_shape, src_shape):
-        captured["restore"] = (detections, input_shape, src_shape)
-        return restored
+    def fake_scale(input_shape, boxes, image_shape, *, xywh):
+        captured["scale"] = (input_shape, boxes.copy(), image_shape, xywh)
+        return restored[:, :4]
 
     monkeypatch.setattr(
-        "vie_plugin_line_squeeze.line_squeeze_detect.run_yolo_nms", fake_nms
+        "vie_plugin_line_squeeze.line_squeeze_detect.non_max_suppression_v8",
+        fake_nms,
     )
     monkeypatch.setattr(
-        "vie_plugin_line_squeeze.line_squeeze_detect.restore_yolo_boxes",
-        fake_restore,
+        "vie_plugin_line_squeeze.line_squeeze_detect.scale_boxes",
+        fake_scale,
     )
 
     result = detector.post_process([prediction], meta)
@@ -91,16 +109,17 @@ def test_roi_det_post_process_uses_shared_yolo_pipeline(monkeypatch):
         prediction,
         {
             "task": "rect",
-            "conf_threshold": 0.5,
-            "iou_threshold": 0.6,
+            "conf_thres": 0.5,
+            "iou_thres": 0.6,
             "classes": [1],
             "agnostic": True,
+            "multi_label": False,
             "nc": 2,
         },
     )
-    assert captured["restore"][0] is raw_detection
-    assert captured["restore"][1] == [8, 10]
-    assert captured["restore"][2] == (3, 5, 3)
+    assert captured["scale"][0] == [8, 10]
+    np.testing.assert_array_equal(captured["scale"][1], raw_detection[:, :4])
+    assert captured["scale"][2:] == ((3, 5), False)
     assert result == {
         "rect": [[10.0, 20.0, 30.0, 40.0]],
         "score": [pytest.approx(0.9)],
@@ -122,12 +141,12 @@ def test_roi_det_post_process_preserves_empty_result(monkeypatch):
     detector.nc = 2
     empty = np.empty((0, 6), dtype=np.float32)
     monkeypatch.setattr(
-        "vie_plugin_line_squeeze.line_squeeze_detect.run_yolo_nms",
+        "vie_plugin_line_squeeze.line_squeeze_detect.non_max_suppression_v8",
         lambda *args, **kwargs: [empty],
     )
     monkeypatch.setattr(
-        "vie_plugin_line_squeeze.line_squeeze_detect.restore_yolo_boxes",
-        lambda detections, input_shape, src_shape: detections.copy(),
+        "vie_plugin_line_squeeze.line_squeeze_detect.scale_boxes",
+        lambda input_shape, boxes, image_shape, *, xywh: boxes.copy(),
     )
 
     result = detector.post_process(
@@ -149,14 +168,28 @@ def test_pipeline_uses_onnx_text_recognizer():
         "vie_plugin_line_squeeze.line_squeeze_detect.LineSqueezeTextRecognizer"
     ) as recognizer_class, patch(
         "vie_plugin_line_squeeze.line_squeeze_detect.RoiDet"
-    ):
+    ) as detector_class:
         from vie_plugin_line_squeeze.line_squeeze_detect import LineSqueezePipeline
 
+        detection_runner = MagicMock()
+        recognition_runner = MagicMock()
         pipeline = LineSqueezePipeline(
-            "det.onnx", "rec.onnx", "inference.yml", det_nc=2
+            "inference.yml",
+            det_nc=2,
+            detection_runner=detection_runner,
+            recognition_runner=recognition_runner,
         )
 
-    recognizer_class.assert_called_once_with("rec.onnx", "inference.yml")
+    detector_class.assert_called_once_with(
+        detection_runner,
+        2,
+        confThreshold=0.5,
+        nmsThreshold=0.5,
+    )
+    recognizer_class.assert_called_once_with(
+        "inference.yml",
+        runner=recognition_runner,
+    )
     assert pipeline.ocr is recognizer_class.return_value
 
 
