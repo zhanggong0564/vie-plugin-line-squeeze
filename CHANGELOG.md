@@ -7,6 +7,7 @@
 
 ### 变更
 
+- 忽略本地运行日志目录，避免生成文件污染插件工作区。
 - 同步示例和配置中的模型路径，采用 `weights/{scene}/{task}_{arch}_v{N}` 命名规范。
 - 场景注册迁移到框架 `ScenarioRegistry`。
 - ROI 检测器改为接收框架 runner，并使用 `services.vision` 公共操作。
