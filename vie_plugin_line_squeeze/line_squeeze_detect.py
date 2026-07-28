@@ -85,23 +85,38 @@ class RoiDet(BaseVisionInfer):
 
 
 VISUAL_SIMILAR_MAP = {
-    's': ['5'], 'S': ['5'], 'l': ['1'], 'i': ['1'], 'I': ['1'], 'O': ['0'], 'o': ['0'],
-    'b': ['6'], 'q': ['9'], 'T': ['1'], 't': ['1'], 'Z': ['2'], 'a': ['2'], 'A': ['4'],
-    '+': ['3'], "G": ['5'], "B": ['5'],
+    "s": ["5"],
+    "S": ["5"],
+    "l": ["1"],
+    "i": ["1"],
+    "I": ["1"],
+    "O": ["0"],
+    "o": ["0"],
+    "b": ["6"],
+    "q": ["9"],
+    "T": ["1"],
+    "t": ["1"],
+    "Z": ["2"],
+    "a": ["2"],
+    "A": ["4"],
+    "+": ["3"],
+    "G": ["5"],
+    "B": ["5"],
 }
+_VALID_LINE_NUMBERS = frozenset("1234567")
 
 
 def check_infos(infos: List[str]) -> List[str]:
     """视觉相似字符纠正（原 LineSqueezeRecognition.check_infos）。"""
     corrected = []
-    valid_info = ['1', '2', '3', '4', '5', '6', '7']
     for char in infos:
-        if char in valid_info:
+        if char in _VALID_LINE_NUMBERS:
             corrected.append(char)
-        elif char in VISUAL_SIMILAR_MAP and VISUAL_SIMILAR_MAP[char][0] in valid_info:
-            corrected.append(VISUAL_SIMILAR_MAP[char][0])
-        else:
-            corrected.append(char)
+            continue
+        replacement = VISUAL_SIMILAR_MAP.get(char, [char])[0]
+        corrected.append(
+            replacement if replacement in _VALID_LINE_NUMBERS else char
+        )
     return corrected
 
 
@@ -115,43 +130,56 @@ class VerifyLineSequenceUtils:
 
     def __call__(self, dc_infos, fu_infos, sorted_dc_boxes, sorted_fu_boxes):
         res_infos = []
-        if (len(dc_infos) != 0 and len(dc_infos) != self.nums) or (len(fu_infos) != 0 and len(fu_infos) != self.nums):
+        invalid_dc_count = len(dc_infos) != 0 and len(dc_infos) != self.nums
+        invalid_fu_count = len(fu_infos) != 0 and len(fu_infos) != self.nums
+        if invalid_dc_count or invalid_fu_count:
             return False, res_infos
         if self.verify_dc:
-            res_info = self.verify_line_sequence(dc_infos, self.nums)
-            if len(sorted_dc_boxes) == 0:
-                sorted_dc_boxes = np.array([[] for _ in range(len(res_info) + 1)])
-            for res, box in zip(res_info, sorted_dc_boxes):
-                res_infos.append({
-                    "status": res, "scene": "dc",
-                    "coordinate": box[:4].tolist(),  # 像素 xyxy，归一化交给基类 normalize_hook
-                    "accuracy": float(box[4]) if len(box) != 0 else 0.0,
-                })
+            self._append_results(
+                res_infos,
+                self.verify_line_sequence(dc_infos, self.nums),
+                sorted_dc_boxes,
+                "dc",
+            )
         if self.verify_fu:
-            res_info = self.verify_line_sequence(fu_infos, self.nums)
-            if len(sorted_fu_boxes) == 0:
-                sorted_fu_boxes = np.array([[] for _ in range(len(res_info) + 1)])
-            for res, box in zip(res_info, sorted_fu_boxes):
-                res_infos.append({
-                    "status": res, "scene": "fu",
-                    "coordinate": box[:4].tolist(),  # 像素 xyxy，归一化交给基类 normalize_hook
-                    "accuracy": float(box[4]) if len(box) != 0 else 0.0,
-                })
+            self._append_results(
+                res_infos,
+                self.verify_line_sequence(fu_infos, self.nums),
+                sorted_fu_boxes,
+                "fu",
+            )
         if self.verify_dc and self.verify_fu:
             return (
-                all([r['status'] for r in res_infos if r['scene'] == 'dc'])
-                and all([r['status'] for r in res_infos if r['scene'] == 'fu']),
+                all(r["status"] for r in res_infos if r["scene"] == "dc")
+                and all(r["status"] for r in res_infos if r["scene"] == "fu"),
                 res_infos,
             )
-        elif self.verify_dc:
-            return all([r['status'] for r in res_infos if r['scene'] == 'dc']), res_infos
-        elif self.verify_fu:
-            return all([r['status'] for r in res_infos if r['scene'] == 'fu']), res_infos
-        else:
-            return True, res_infos
+        if self.verify_dc:
+            return all(
+                r["status"] for r in res_infos if r["scene"] == "dc"
+            ), res_infos
+        if self.verify_fu:
+            return all(
+                r["status"] for r in res_infos if r["scene"] == "fu"
+            ), res_infos
+        return True, res_infos
+
+    @staticmethod
+    def _append_results(res_infos, statuses, boxes, scene):
+        if len(boxes) == 0:
+            boxes = np.array([[] for _ in range(len(statuses) + 1)])
+        for status, box in zip(statuses, boxes):
+            res_infos.append(
+                {
+                    "status": status,
+                    "scene": scene,
+                    "coordinate": box[:4].tolist(),
+                    "accuracy": float(box[4]) if len(box) != 0 else 0.0,
+                }
+            )
 
     def verify_line_sequence(self, infos: List[str], nums: int):
-        res_infos = [False for _ in range(nums)]
+        res_infos = [False] * nums
         try:
             if len(infos) != nums:
                 for info in infos:
@@ -216,11 +244,17 @@ class LineSqueezePipeline:
 
     def infer(self, image: np.ndarray) -> LineSqueezeRecognitionResult:
         results = self.roi_det.infer(image)  # {rect, score, cls}
-        classes = results['cls']
-        score = results['score']
-        if len(results['rect']) == 0:
+        classes = results["cls"]
+        scores = results["score"]
+        if len(results["rect"]) == 0:
             return LineSqueezeRecognitionResult()
-        rect = np.concatenate((np.array(results['rect']), np.array(score).reshape(-1, 1)), axis=1)
+        rect = np.concatenate(
+            (
+                np.array(results["rect"]),
+                np.array(scores).reshape(-1, 1),
+            ),
+            axis=1,
+        )
         dc_boxes = [box for cls, box in zip(classes, rect) if cls == 1]
         fu_boxes = [box for cls, box in zip(classes, rect) if cls == 0]
         # ⚠️ 新框架 sort_boxes 返回 (boxes, indices)，需解包（master 旧版只返回 boxes）
@@ -228,17 +262,20 @@ class LineSqueezePipeline:
         sorted_fu_boxes, _ = sort_boxes(fu_boxes)
         dc_rois = self._crop_rois(image, sorted_dc_boxes)
         fu_rois = self._crop_rois(image, sorted_fu_boxes)
-        dc_res = self._recognize(dc_rois)
-        fu_res = self._recognize(fu_rois)
-        dc_res = check_infos(dc_res)
-        fu_res = check_infos(fu_res)
-        return LineSqueezeRecognitionResult(dc_res, fu_res, sorted_dc_boxes, sorted_fu_boxes)
+        dc_res = check_infos(self._recognize(dc_rois))
+        fu_res = check_infos(self._recognize(fu_rois))
+        return LineSqueezeRecognitionResult(
+            dc_res,
+            fu_res,
+            sorted_dc_boxes,
+            sorted_fu_boxes,
+        )
 
     @staticmethod
     def _crop_rois(image: np.ndarray, boxes) -> list[np.ndarray]:
         rois = []
+        height, width = image.shape[:2]
         for box in boxes:
-            height, width = image.shape[:2]
             x1 = max(int(box[0]), 0)
             y1 = max(int(box[1]) + 10, 0)
             x2 = min(int(box[2]), width)
