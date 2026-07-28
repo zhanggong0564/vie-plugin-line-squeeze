@@ -21,7 +21,7 @@ def test_package_metadata_requires_yolo_pipeline_framework():
     project_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
     project = project_path.read_text(encoding="utf-8")
 
-    assert 'version = "0.1.2"' in project
+    assert 'version = "0.1.3"' in project
     assert '"vie-framework>=2.0.1"' in project
     assert '"PyYAML>=6.0,<7"' in project
 
