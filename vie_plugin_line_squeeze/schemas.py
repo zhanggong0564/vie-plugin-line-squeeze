@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field
 
+from schemas.common import VisualReferenceParams
 
-class ModelParams(BaseModel):
+
+class ModelParams(VisualReferenceParams):
     product_model: str = Field(..., description="产品型号(例如:五路有熔丝盒有磁环)")
 
 
