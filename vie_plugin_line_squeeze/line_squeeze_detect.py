@@ -5,7 +5,12 @@ from typing import List, Dict
 
 import numpy as np
 
-from services.base import BaseVisionInfer
+from services.base import (
+    BaseVisionInfer,
+    CoordinateSpace,
+    OCRToken,
+    xyxy_region,
+)
 from services.inference import InferenceRunner
 from services.vision.boxes import scale_boxes, sort_boxes, xywhr2xyxyxyxy
 from services.vision.nms import non_max_suppression_v8
@@ -215,6 +220,8 @@ class LineSqueezeRecognitionResult:
     fu_res: List[str] = field(default_factory=list)
     dc_boxes: List = field(default_factory=list)
     fu_boxes: List = field(default_factory=list)
+    dc_tokens: List[OCRToken] = field(default_factory=list)
+    fu_tokens: List[OCRToken] = field(default_factory=list)
 
 
 class LineSqueezePipeline:
@@ -262,13 +269,15 @@ class LineSqueezePipeline:
         sorted_fu_boxes, _ = sort_boxes(fu_boxes)
         dc_rois = self._crop_rois(image, sorted_dc_boxes)
         fu_rois = self._crop_rois(image, sorted_fu_boxes)
-        dc_res = check_infos(self._recognize(dc_rois))
-        fu_res = check_infos(self._recognize(fu_rois))
+        dc_res, dc_tokens = self._recognize(dc_rois, sorted_dc_boxes)
+        fu_res, fu_tokens = self._recognize(fu_rois, sorted_fu_boxes)
         return LineSqueezeRecognitionResult(
-            dc_res,
-            fu_res,
+            check_infos(dc_res),
+            check_infos(fu_res),
             sorted_dc_boxes,
             sorted_fu_boxes,
+            dc_tokens,
+            fu_tokens,
         )
 
     @staticmethod
@@ -289,14 +298,32 @@ class LineSqueezePipeline:
             rois.append(roi)
         return rois
 
-    def _recognize(self, rois: list[np.ndarray]) -> list[str]:
+    def _recognize(
+        self,
+        rois: list[np.ndarray],
+        boxes,
+    ) -> tuple[list[str], list[OCRToken]]:
         if not rois:
-            return []
-        return [
+            return [], []
+        results = self.ocr.predict(rois)
+        texts = [
             result.text[2]
-            for result in self.ocr.predict(rois)
+            for result in results
             if len(result.text) > 2
         ]
+        tokens = [
+            OCRToken(
+                text=result.text,
+                region=xyxy_region(
+                    [box[0], box[1], box[2], box[3]],
+                    CoordinateSpace.PIXEL,
+                ),
+                recognition_score=result.score,
+                detection_score=float(box[4]),
+            )
+            for result, box in zip(results, boxes)
+        ]
+        return texts, tokens
 
     def close(self) -> None:
         first_error = None

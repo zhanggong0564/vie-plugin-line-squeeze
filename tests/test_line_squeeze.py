@@ -245,7 +245,13 @@ def test_business_post_process_builds_result(judge):
     # to_dict 输出形状不变，路由层无需再 isinstance 兜底
     out = ctx.result.to_dict()
     assert out["status"] == "true"
-    assert set(out.keys()) == {"status", "detailList", "error_msg", "message"}
+    assert set(out.keys()) == {
+        "status",
+        "verdict",
+        "detailList",
+        "error_msg",
+        "message",
+    }
 
 
 def test_pipeline_batches_dc_and_fu_and_uses_third_character():
@@ -269,6 +275,10 @@ def test_pipeline_batches_dc_and_fu_and_uses_third_character():
     assert len(pipeline.ocr.predict.call_args_list[1].args[0]) == 1
     assert result.dc_res == ["1"]
     assert result.fu_res == ["2"]
+    assert result.dc_tokens[0].text == "AA1"
+    assert result.dc_tokens[0].recognition_score == pytest.approx(0.9)
+    assert result.dc_tokens[0].detection_score == pytest.approx(0.9)
+    assert result.fu_tokens[0].text == "BB2"
 
 
 def test_pipeline_rejects_empty_roi_before_recognition():
