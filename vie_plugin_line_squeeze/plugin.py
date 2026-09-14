@@ -9,6 +9,13 @@ from . import business_logic  # noqa: F401  触发 ScenarioRegistry 注册
 
 
 class LineSqueezeRouter(BaseRouter):
+    request_document_model = LineSqueezeRequest
+    request_document_example = {
+        "product": "线序检测", "type": "物料号",
+        "modelParams": {"product_model": "五路有熔丝盒有磁环"},
+    }
+    request_document_notes = "modelParams.product_model 必填，须填写已配置的实际产品型号。"
+
     def __init__(self, router_name, api_path, summary, description, detector_type, tag=None):
         super().__init__(router_name, api_path, summary, description, detector_type, tag=tag)
 
