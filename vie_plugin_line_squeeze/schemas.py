@@ -8,7 +8,7 @@ class ModelParams(VisualReferenceParams):
 
 
 class LineSqueezeRequest(BaseModel):
-    """线路压缩检测请求体（原 master 继承 DCFuseRequest，此处独立完整定义）。"""
+    """线序检测请求参数。"""
 
     product: str = Field(..., description="产品类型")
     type: str = Field(..., description="物料号")
