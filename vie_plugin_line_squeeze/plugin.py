@@ -30,8 +30,8 @@ class LineSqueezeRouter(BaseRouter):
 line_squeeze_router = LineSqueezeRouter(
     router_name="line_squeeze_router",
     api_path="/line_squeeze_recognition",
-    summary="线路压缩检测接口",
+    summary="线序检测接口",
     description="根据输入的图像和产品型号，返回线序检测结果",
     detector_type="line_squeeze",
-    tag="线路压缩检测",
+    tag="线序检测",
 )
